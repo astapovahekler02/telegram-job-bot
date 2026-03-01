@@ -53,9 +53,6 @@ def detect_language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
         if payload in {"ru", "rus", "russian"}:
             return "ru"
 
-    user_lang = (update.effective_user.language_code or "").lower()
-    if user_lang.startswith("en"):
-        return "en"
     return "ru"
 
 
