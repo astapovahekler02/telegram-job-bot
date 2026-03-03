@@ -126,6 +126,7 @@ app = ApplicationBuilder().token(TOKEN).build()
 
 conv_handler = ConversationHandler(
     entry_points=[CommandHandler("start", start)],
+    allow_reentry=True,
     states={
         VACANCY: [MessageHandler(filters.TEXT & ~filters.COMMAND, vacancy)],
         NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, name)],
