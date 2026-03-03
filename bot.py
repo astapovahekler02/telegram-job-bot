@@ -94,9 +94,6 @@ async def send_application_to_manager(context: ContextTypes.DEFAULT_TYPE, incomp
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if has_partial_application(context.user_data):
-        await send_application_to_manager(context, incomplete=True)
-
     lang = detect_language(update, context)
     context.user_data.clear()
     context.user_data["lang"] = lang
