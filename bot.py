@@ -1,4 +1,5 @@
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram.constants import ParseMode
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     ConversationHandler, ContextTypes, filters
@@ -29,6 +30,10 @@ TEXTS = {
         "vacancy": "📌 Вакансия",
         "name": "👤 Имя",
         "phone": "📞 Телефон",
+        "telegram_name": "👤 Имя в Telegram",
+        "telegram_username": "🔗 Username",
+        "telegram_contact": "💬 Связь в Telegram",
+        "telegram_id": "🆔 Telegram ID",
         "thanks": "✅ Спасибо! Наш менеджер свяжется с вами.",
         "timed_out": "⌛ Заявка не завершена. Мы сохранили то, что вы уже ввели.",
         "vacancies": [["Бетонщик"], ["Бригадир"], ["Сборщик"], ["Сварщик 136 метод"]],
@@ -43,6 +48,10 @@ TEXTS = {
         "vacancy": "📌 Vacancy",
         "name": "👤 Name",
         "phone": "📞 Phone",
+        "telegram_name": "👤 Telegram name",
+        "telegram_username": "🔗 Username",
+        "telegram_contact": "💬 Telegram contact",
+        "telegram_id": "🆔 Telegram ID",
         "thanks": "✅ Thank you! Our manager will contact you.",
         "timed_out": "⌛ Application not completed. We saved what you entered.",
         "vacancies": [["Concrete worker"], ["Foreman"], ["Assembler"], ["Welder 136 method"]],
@@ -63,7 +72,23 @@ def detect_language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
 
 
 def has_partial_application(data: dict) -> bool:
-    return any(data.get(field) for field in ("vacancy", "name", "phone")) and not data.get("submitted")
+    return data.get("started") and not data.get("submitted")
+
+
+def save_telegram_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not user:
+        return
+
+    full_name = " ".join(part for part in [user.first_name, user.last_name] if part).strip()
+    if full_name:
+        context.user_data["telegram_name"] = full_name
+    if user.username:
+        context.user_data["telegram_username"] = user.username
+        context.user_data["telegram_contact_url"] = f"https://t.me/{user.username}"
+    else:
+        context.user_data["telegram_contact_url"] = f"tg://user?id={user.id}"
+    context.user_data["telegram_id"] = str(user.id)
 
 
 async def send_application_to_manager(context: ContextTypes.DEFAULT_TYPE, incomplete: bool = False):
@@ -78,15 +103,28 @@ async def send_application_to_manager(context: ContextTypes.DEFAULT_TYPE, incomp
     vacancy = data.get("vacancy", "—")
     name_value = data.get("name", "—")
     phone_value = data.get("phone", "—")
+    telegram_name = data.get("telegram_name", "—")
+    telegram_username = f"@{data['telegram_username']}" if data.get("telegram_username") else "—"
+    telegram_id = data.get("telegram_id", "—")
+    telegram_contact_url = data.get("telegram_contact_url")
+    telegram_contact = (
+        f'<a href="{telegram_contact_url}">{t["telegram_contact"]}</a>'
+        if telegram_contact_url
+        else t["telegram_contact"]
+    )
 
     message = (
         f"{title}\n\n"
         f"{t['vacancy']}: {vacancy}\n"
         f"{t['name']}: {name_value}\n"
-        f"{t['phone']}: {phone_value}"
+        f"{t['phone']}: {phone_value}\n"
+        f"{t['telegram_name']}: {telegram_name}\n"
+        f"{t['telegram_username']}: {telegram_username}\n"
+        f"{t['telegram_id']}: {telegram_id}\n"
+        f"{telegram_contact}"
     )
 
-    await context.bot.send_message(chat_id=CHAT_ID, text=message)
+    await context.bot.send_message(chat_id=CHAT_ID, text=message, parse_mode=ParseMode.HTML)
     if incomplete:
         data["incomplete_sent"] = True
     else:
@@ -97,6 +135,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = detect_language(update, context)
     context.user_data.clear()
     context.user_data["lang"] = lang
+    context.user_data["started"] = True
+    save_telegram_contact(update, context)
     t = TEXTS[lang]
 
     await update.message.reply_text(
@@ -112,6 +152,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def vacancy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    save_telegram_contact(update, context)
     context.user_data["vacancy"] = update.message.text
     t = TEXTS.get(context.user_data.get("lang", "ru"), TEXTS["ru"])
 
@@ -124,6 +165,7 @@ async def vacancy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    save_telegram_contact(update, context)
     context.user_data["name"] = update.message.text
     t = TEXTS.get(context.user_data.get("lang", "ru"), TEXTS["ru"])
 
@@ -135,6 +177,7 @@ async def name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    save_telegram_contact(update, context)
     context.user_data["phone"] = update.message.text
 
     data = context.user_data
