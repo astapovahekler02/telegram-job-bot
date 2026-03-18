@@ -75,6 +75,10 @@ def has_partial_application(data: dict) -> bool:
     return data.get("started") and not data.get("submitted")
 
 
+def has_unsubmitted_application(data: dict) -> bool:
+    return data.get("started") and not data.get("submitted") and not data.get("incomplete_sent")
+
+
 def get_timeout_job_name(chat_id: int, user_id: int) -> str:
     return f"incomplete-application:{chat_id}:{user_id}"
 
@@ -172,6 +176,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_telegram_contact(update, context)
     schedule_timeout_job(update, context)
     t = TEXTS[lang]
+
+    if has_unsubmitted_application(context.user_data):
+        await send_application_to_manager(context, incomplete=True)
 
     await update.message.reply_text(
         t["welcome"]
