@@ -75,6 +75,31 @@ def has_partial_application(data: dict) -> bool:
     return data.get("started") and not data.get("submitted")
 
 
+def get_timeout_job_name(chat_id: int, user_id: int) -> str:
+    return f"incomplete-application:{chat_id}:{user_id}"
+
+
+def cancel_timeout_job(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> None:
+    for job in context.application.job_queue.get_jobs_by_name(get_timeout_job_name(chat_id, user_id)):
+        job.schedule_removal()
+
+
+def schedule_timeout_job(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_chat or not update.effective_user:
+        return
+
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    cancel_timeout_job(context, chat_id, user_id)
+    context.application.job_queue.run_once(
+        handle_inactivity_timeout,
+        when=CONVERSATION_TIMEOUT,
+        chat_id=chat_id,
+        user_id=user_id,
+        name=get_timeout_job_name(chat_id, user_id),
+    )
+
+
 def save_telegram_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user:
@@ -131,12 +156,21 @@ async def send_application_to_manager(context: ContextTypes.DEFAULT_TYPE, incomp
         data["submitted"] = True
 
 
+async def handle_inactivity_timeout(context: ContextTypes.DEFAULT_TYPE):
+    await send_application_to_manager(context, incomplete=True)
+    t = TEXTS.get(context.user_data.get("lang", "ru"), TEXTS["ru"])
+    if context.job and context.job.chat_id:
+        await context.bot.send_message(chat_id=context.job.chat_id, text=t["timed_out"])
+    context.user_data.clear()
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = detect_language(update, context)
     context.user_data.clear()
     context.user_data["lang"] = lang
     context.user_data["started"] = True
     save_telegram_contact(update, context)
+    schedule_timeout_job(update, context)
     t = TEXTS[lang]
 
     await update.message.reply_text(
@@ -153,6 +187,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def vacancy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_telegram_contact(update, context)
+    schedule_timeout_job(update, context)
     context.user_data["vacancy"] = update.message.text
     t = TEXTS.get(context.user_data.get("lang", "ru"), TEXTS["ru"])
 
@@ -166,6 +201,7 @@ async def vacancy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_telegram_contact(update, context)
+    schedule_timeout_job(update, context)
     context.user_data["name"] = update.message.text
     t = TEXTS.get(context.user_data.get("lang", "ru"), TEXTS["ru"])
 
@@ -178,11 +214,14 @@ async def name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_telegram_contact(update, context)
+    schedule_timeout_job(update, context)
     context.user_data["phone"] = update.message.text
 
     data = context.user_data
     t = TEXTS.get(data.get("lang", "ru"), TEXTS["ru"])
     await send_application_to_manager(context, incomplete=False)
+    if update.effective_chat and update.effective_user:
+        cancel_timeout_job(context, update.effective_chat.id, update.effective_user.id)
 
     await update.message.reply_text(
         t["thanks"]
@@ -192,26 +231,15 @@ async def phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-async def handle_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_application_to_manager(context, incomplete=True)
-    t = TEXTS.get(context.user_data.get("lang", "ru"), TEXTS["ru"])
-    if update and update.effective_chat:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=t["timed_out"])
-    context.user_data.clear()
-    return ConversationHandler.END
-
-
-app = ApplicationBuilder().token(TOKEN).build()
+app = ApplicationBuilder().token(TOKEN).concurrent_updates(False).build()
 
 conv_handler = ConversationHandler(
     entry_points=[CommandHandler("start", start)],
     allow_reentry=True,
-    conversation_timeout=CONVERSATION_TIMEOUT,
     states={
         VACANCY: [MessageHandler(filters.TEXT & ~filters.COMMAND, vacancy)],
         NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, name)],
         PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, phone)],
-        ConversationHandler.TIMEOUT: [MessageHandler(filters.ALL, handle_timeout)],
     },
     fallbacks=[]
 )
